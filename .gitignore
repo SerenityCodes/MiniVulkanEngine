@@ -1,0 +1,8 @@
+/build
+/bin
+/assets/brickadia
+CMakeFiles/
+cmake-build-debug/
+out/
+.vs/
+.idea/
