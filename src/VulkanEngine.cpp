@@ -87,7 +87,7 @@ void VulkanEngine::setup_sync_structures() {
     }
 }
 
-VulkanEngine::VulkanEngine() {
+VulkanEngine::VulkanEngine() : deletion_queue() {
     SDL_Init(SDL_INIT_VIDEO);
 
     SDL_WindowFlags window_flags = SDL_WINDOW_VULKAN;
@@ -115,11 +115,12 @@ VulkanEngine::~VulkanEngine() {
     }
     vkDeviceWaitIdle(device_);
     // Clean up command pools and sync objects
-    for (const auto&[command_pool, cmd_buffer, render_fence, render_semaphore, swap_chain_semaphore] : frames_) {
+    for (auto& [deletion_queue, command_pool, cmd_buffer, render_fence, render_semaphore, swap_chain_semaphore] : frames_) {
         device_.destroyCommandPool(command_pool);
         device_.destroyFence(render_fence);
         device_.destroySemaphore(render_semaphore);
         device_.destroySemaphore(swap_chain_semaphore);
+        deletion_queue.flush();
     }
 
     vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
@@ -134,24 +135,24 @@ VulkanEngine::~VulkanEngine() {
 
 void VulkanEngine::draw() {
     constexpr uint64_t one_second = 1000000000;
-    FrameData& current_frame_data = current_frame();
-    const vk::Result fence_wait_result = device_.waitForFences(1, &current_frame_data.render_fence, true, one_second);
-    if (fence_wait_result != vk::Result::eSuccess) {
-        // Throw error
+    auto&[deletion_queue, command_pool, command_buffer, render_fence, render_semaphore, swap_chain_semaphore] = current_frame();
+    if (const vk::Result fence_wait_result = device_.waitForFences(1, &render_fence, true, one_second);
+        fence_wait_result != vk::Result::eSuccess) {
         throw std::runtime_error("VulkanEngine failed to wait for a frame");
     }
-    const vk::Result fence_reset_result = device_.resetFences(1, &current_frame_data.render_fence);
-    if (fence_reset_result != vk::Result::eSuccess) {
+    deletion_queue.flush();
+    if (const vk::Result fence_reset_result = device_.resetFences(1, &render_fence);
+        fence_reset_result != vk::Result::eSuccess) {
         throw std::runtime_error("VulkanEngine failed to reset fence");
     }
 
-    const auto next_image_index = device_.acquireNextImageKHR(swap_chain_, UINT64_MAX, current_frame_data.swap_chain_semaphore);
+    const auto next_image_index = device_.acquireNextImageKHR(swap_chain_, UINT64_MAX, swap_chain_semaphore);
     if (next_image_index.result != vk::Result::eSuccess) {
         throw std::runtime_error("VulkanEngine failed to acquire swap chain image");
     }
     uint32_t swap_chain_image_index = next_image_index.value;
 
-    const vk::CommandBuffer& main_buffer = current_frame_data.command_buffer;
+    const vk::CommandBuffer& main_buffer = command_buffer;
     main_buffer.reset();
     constexpr vk::CommandBufferBeginInfo begin_info{vk::CommandBufferUsageFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit), nullptr};
     main_buffer.begin(begin_info);
@@ -167,15 +168,15 @@ void VulkanEngine::draw() {
     main_buffer.end();
 
     const vk::CommandBufferSubmitInfo cmd_buffer_submit_info{main_buffer};
-    const vk::SemaphoreSubmitInfo wait_info = submit_semaphore(vk::PipelineStageFlagBits2::eColorAttachmentOutput, current_frame_data.swap_chain_semaphore);
-    const vk::SemaphoreSubmitInfo signal_info = submit_semaphore(vk::PipelineStageFlagBits2::eAllGraphics, current_frame_data.render_semaphore);
+    const vk::SemaphoreSubmitInfo wait_info = submit_semaphore(vk::PipelineStageFlagBits2::eColorAttachmentOutput, swap_chain_semaphore);
+    const vk::SemaphoreSubmitInfo signal_info = submit_semaphore(vk::PipelineStageFlagBits2::eAllGraphics, render_semaphore);
     const vk::SubmitInfo2 cmd_buffer_submit = final_submit_info(&cmd_buffer_submit_info, &signal_info, &wait_info);
-    if (const auto result = graphics_queue_.submit2(1, &cmd_buffer_submit, current_frame_data.render_fence);
+    if (const auto result = graphics_queue_.submit2(1, &cmd_buffer_submit, render_fence);
         result != vk::Result::eSuccess) {
         throw std::runtime_error("Graphics queue submit failed");
     }
     if (const vk::PresentInfoKHR present_info{1,
-        &current_frame_data.render_semaphore,
+        &render_semaphore,
         1,
         &swap_chain_,
         &swap_chain_image_index}; graphics_queue_.presentKHR(present_info) != vk::Result::eSuccess) {

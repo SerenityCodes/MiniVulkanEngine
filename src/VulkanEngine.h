@@ -5,7 +5,10 @@
 
 #include <vulkan\vulkan.hpp>
 
+#include "DeletionQueue.h"
+
 struct FrameData {
+	DeletionQueue deletion_queue;
 	vk::CommandPool command_pool;
 	vk::CommandBuffer command_buffer;
 	vk::Fence render_fence;
@@ -15,6 +18,8 @@ struct FrameData {
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
 class VulkanEngine {
+	DeletionQueue deletion_queue;
+
 	vk::Instance instance_;
 	vk::PhysicalDevice physical_device_;
 	vk::Device device_;

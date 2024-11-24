@@ -6,6 +6,8 @@ add_executable (engine
     VulkanEngine.cpp
         ImageProcess.cpp
         ImageProcess.h
+        DeletionQueue.cpp
+        DeletionQueue.h
 )
 
 set_property(TARGET engine PROPERTY CXX_STANDARD 20)
